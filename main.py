@@ -12,7 +12,7 @@ import json
 
 runLoop = False
 testing = True
-day = 30 # number of seconds in a day - perform daily check
+day = 86400 # number of seconds in a day - perform daily check
 
 if os.path.exists("./temp/state.json"):
     print("Checking state...")
