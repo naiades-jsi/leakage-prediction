@@ -1,0 +1,4 @@
+pandas
+scipy==1.7.1
+pyproj==3.1.0
+simpy
