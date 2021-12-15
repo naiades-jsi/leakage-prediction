@@ -6,7 +6,7 @@ import pandas as pd
 import os
 import processing.geo_converter as geo_converter
 from csv import writer
-from kafka import KafkaProducer
+from kafka import KafkaProducer, KafkaConsumer
 import time 
 
 config_DIR = "./config/"
@@ -58,20 +58,52 @@ def runStart():
     noise_df = pd.DataFrame.from_dict(noise_sensors, columns=["ENTITY ID","LOCATION","LONGITUDE","LATITUDE","INP NAME","READING"], orient="index")
     noise_df.to_csv("./temp/noise_sensors.csv")
 
+def runStart_kafka():
+    ## change starting sensors
+    noise_sensors = {}
+    i= 0
+    consumer = KafkaConsumer(bootstrap_servers= ["192.168.2.100:9092"],
+                auto_offset_reset= "latest",
+                enable_auto_commit= True,
+                auto_commit_interval_ms=2000,
+                group_id= "braila_noise_predictions",
+                value_deserializer= lambda x: json.loads(x.decode('utf-8')),
+                consumer_timeout_ms=3000
+
+                )
+    for sensor_id in config.noise_sensor_ids:
+        sensor = "braila_noise"+sensor_id
+        consumer.subscribe([sensor])
+        
+        last_entry = None
+        for message in consumer:
+            last_entry = message.value
+         
+        location = eval(last_entry["location"])
+        junction, x, y = geo_converter.wgs84_to_3844(location["coordinates"][0], location["coordinates"][1])
+        noise_sensors[i] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, last_entry["noise_db"]]
+        i += 1
+            
+
+    noise_df = pd.DataFrame.from_dict(noise_sensors, columns=["ENTITY ID","LOCATION","LONGITUDE","LATITUDE","INP NAME","READING"], orient="index")
+    noise_df.to_csv("./temp/noise_sensors.csv")
+
+
+
 def send_to_kafka(sensor, data, is_final):
-    producer = KafkaProducer(bootstrap_servers=["localhost:9092"])
+    producer = KafkaProducer(bootstrap_servers=["192.168.2.100:9092"])
     topic = f"braila_leakage_position{sensor[-4:]}"
     if is_final: 
         topic = "braila_leakage_position2182"
         to_send = json.dumps({
             "timestamp": int(time.time()),
-            "position": data["location"]["coordinates"],
+            "position": data["location"]["coordinates"], 
             "final_location" : True
         })
     else: 
         to_send = json.dumps({
             "timestamp": int(time.time()),
-            "position": data["location"]["coordinates"],
+            "position": data, ## data is [x, y]
             "final_location" : False
         })
     producer.send(topic, to_send.encode("utf-8"))
@@ -124,7 +156,11 @@ def write_instructions(node, is_final=False, is_start=False):
             sensor = sensors[node_idx]
             sensor_data = pd.read_csv(f"{dump_folder_DIR}{sensor}.csv")
             last_entry = sensor_data.iloc[-1].copy(deep=True)
-            junction, x_WGS84, y_WGS84, x, y = geo_converter.get_geo_info(node[node_idx])
+
+            if n_instructions > 1:
+                junction, x_WGS84, y_WGS84, x, y = geo_converter.get_geo_info(node[node_idx])
+            elif n_instructions == 1:
+                junction, x_WGS84, y_WGS84, x, y = geo_converter.get_geo_info(node)
             if True:
                 last_entry["location"] = {'coordinates': [x_WGS84, y_WGS84], 'type': 'Point'}
                 last_entry["time"] = int(time.time())
@@ -134,3 +170,66 @@ def write_instructions(node, is_final=False, is_start=False):
                     writer(fd).writerow(last_entry.to_numpy())
 #               send_to_kafka(sensor, last_entry, is_final=False) ### add kafka functionality
     return
+
+def write_instructions_kafka(node, is_final=False, is_start=False):
+    if is_final:
+        data = {"location" : {"coordinates" : node}, "is_final": True}
+        send_to_kafka("2182", data, is_final=True) 
+    else:
+        n_instructions = len(node) if type(node) == list else 1
+        sensors = ["braila_noise2182", "braila_noise5980", "braila_noise5981", "braila_noise5982"]
+        for node_idx in range(n_instructions):
+            sensor = sensors[node_idx]
+
+            if n_instructions > 1:
+                junction, x_WGS84, y_WGS84, x, y = geo_converter.get_geo_info(node[node_idx])
+            elif n_instructions == 1:
+                junction, x_WGS84, y_WGS84, x, y = geo_converter.get_geo_info(node)
+            
+            send_to_kafka(sensor, [x_WGS84, y_WGS84], is_final=False) ### add kafka functionality
+    return
+
+def read_kafka(): ## read from kafka input topic
+    moved_sensors = {}
+    consumer = KafkaConsumer(bootstrap_servers= ["192.168.2.100:9092"],
+                auto_offset_reset= "latest",
+                enable_auto_commit= True,
+                auto_commit_interval_ms=2000,
+                group_id= "braila_noise_predictions",
+                value_deserializer= lambda x: json.loads(x.decode('utf-8')),
+                consumer_timeout_ms= 3000
+                )
+    for sensor_id in config.noise_sensor_ids:
+        sensor = "braila_noise"+sensor_id
+        
+        consumer.subscribe([sensor])
+        last_entry = None
+        for message in consumer:
+            last_entry = message.value
+            print(sensor, last_entry)
+        if last_entry and last_entry["isMovedToNewLocation"]:
+            moved_sensors[sensor] = last_entry
+        
+    for sensor in moved_sensors:
+        try:
+            location = eval(moved_sensors[sensor]["location"])
+            junction, x, y = geo_converter.wgs84_to_3844(location["coordinates"][0], location["coordinates"][1])
+            noise_df = pd.read_csv("./temp/noise_sensors.csv", index_col=0)
+            noise_df.loc[len(noise_df.index)] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, moved_sensors[sensor]["noise_db"]] ## and this
+            noise_df.to_csv("./temp/noise_sensors.csv")
+            strength_map = pd.read_csv("./temp/strength_map.csv", index_col=0)
+            strength_map.loc[junction] = [x.item(), y.item(), moved_sensors[sensor]["noise_db"]] ### this too
+            strength_map.to_csv("./temp/strength_map.csv")
+    
+        
+        except Exception as e:
+            print(e, "-- In IO.read_kafka")
+            return False, None, None
+    print(moved_sensors.keys())
+    if len(moved_sensors.keys()) > 0:
+        return True, "junction", "parsed[2]" ## parsed[2] and [5] are noise_db and location respectively ------- DONT NEED LAST 2 ANYWAY
+    
+    else:
+        return False, None, None
+
+    

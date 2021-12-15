@@ -67,7 +67,11 @@ def run_branch_search(state):
     branches = prediction.set_branches(strength_map)
     for idx in range(len(branches)):
         state["branches"][idx] = branches[idx]
-        state["to_append"].append(idx)
+        if all(elem in strength_map.index  for elem in state["branches"][idx]):
+            print("Branch is already in strength map ", idx, branches[idx])
+            continue
+        else:
+            state["to_append"].append(idx)
 
     return state
 

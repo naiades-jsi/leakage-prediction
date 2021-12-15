@@ -12,7 +12,7 @@ import json
 
 runLoop = False
 testing = True
-day = 86400 # number of seconds in a day - perform daily check
+day = 30 # number of seconds in a day - perform daily check
 
 if os.path.exists("./temp/state.json"):
     print("Checking state...")
@@ -22,19 +22,19 @@ if os.path.exists("./temp/state.json"):
 else: 
     print("State not yet established.")
     state = None
-    IO.runStart()
+    IO.runStart_kafka()
     mng.write_logs("State not yet established, starting a fresh run...")
     geo.conversion_table(config.layout_file_path, "./storage")
     mng.write_logs(f'Excecuting crawler')
     state = pipe.run_crawler(state)
     mng.write_logs(f'Crawler iteration complete. Nodes to check: {state["crawl_res"]}.')
     mng.write_state(state)
-    IO.write_instructions(state["crawl_res"], is_start=True)
+    IO.write_instructions_kafka(state["crawl_res"], is_start=True)
     mng.write_logs("Run completed successfully! Waiting for relocation.")
     
 
 while True:
-    is_moved, location, value = IO.read_instructions()
+    is_moved, location, value = IO.read_kafka()
 
 
     if state and not state["crawl_complete"] and is_moved:
@@ -42,30 +42,38 @@ while True:
         state = pipe.run_crawler(state)
         if state["crawl_complete"] == True:
             mng.write_logs(f'Crawling complete. Peak found at: {state["crawl_res"]}.')
-            IO.write_instructions(state["crawl_res"])
+            IO.write_instructions_kafka(state["crawl_res"])
         else: 
             mng.write_logs(f'Crawler iteration complete. Nodes to check: {state["crawl_res"]}.')
-            IO.write_instructions(state["crawl_res"])
+            IO.write_instructions_kafka(state["crawl_res"])
         mng.write_state(state) # adding checkpoint in case of error
         mng.write_logs("Run completed successfully! Waiting for relocation.")
 
     elif state and state["crawl_complete"] and len(state["to_append"]) != 0 and is_moved:  
-        idx_of_branch = state["to_append"][0]
-        IO.write_instructions(state["branches"][str(idx_of_branch)])
         state["to_append"].pop(0)
+        if len(state["to_append"]) == 0: 
+            mng.write_state(state)
+            continue
+        idx_of_branch = state["to_append"][0]
+        try:
+            IO.write_instructions_kafka(state["branches"][idx_of_branch])
+        except KeyError as e:
+            IO.write_instructions_kafka(state["branches"][str(idx_of_branch)])
         mng.write_state(state)
 
     elif state and state["crawl_complete"] and len(state["branches"]) == 0:
         state = pipe.run_branch_search(state)
+        if len(state["to_append"]) == 0:
+            mng.write_state(state)
+            continue
         idx_of_branch = state["to_append"][0]
-        IO.write_instructions(state["branches"][str(idx_of_branch)])
-        state["to_append"].pop(0)
+        IO.write_instructions_kafka(state["branches"][idx_of_branch])
         mng.write_state(state)
 
     elif state and state["crawl_complete"] and len(state["branches"]) != 0 and len(state["to_append"]) == 0: 
         state = pipe.run_poly_search(state)
         mng.write_state(state)
-        IO.write_instructions(state["algorithm_res"], is_final=True)
+        IO.write_instructions_kafka(state["algorithm_res"], is_final=True)
         mng.write_logs(f'Program finished. Exit code 0. Leakage is at: {state["algorithm_res"]}')
         break
 

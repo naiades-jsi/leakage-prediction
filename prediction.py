@@ -243,45 +243,41 @@ def set_strength_map():
 
 class Missing(Exception): pass
 
-def check_edges(edges, strength_map):
+def check_edges(edges, strength_map, peak):
     length = len(edges)
-    for idx, edge in enumerate(edges):
-        current = edge
-        found = False
-        checked = []
+    found = True
+    for node in edges:
         try:
-            while not found:
-                if edge in strength_map.index:
-                    found = True
-                else:
-                    for node in layout.loc[edge].connections:
-                        if node in strength_map.index and node != current:
-                            found = True
-                            break
-                        elif node not in strength_map.index and node != current and "-A" not in node:
-                            print("second", node)
-                            raise Missing
-                            
-                        else:
-                            current = node
-                            print("third", current)
+            if node in strength_map.index:
+                pass
+            else:
+                for conn in layout.loc[node].connections:
+                    if conn in strength_map.index and node != peak:
+                        pass
+                    elif conn != peak and "-A" not in conn:
+                        raise Missing
+        
         except Missing:
-            pass
-    print(found)
-    return found
+            return False
+    
+    return found ### when FALSE - all edges were not found
 
 
 def hill_crawler(strength_map):
     high_idx = np.where(strength_map.strength == max(strength_map.strength))
-    current_peak = strength_map.iloc[high_idx].index.item()
+    #print(high_idx, high_idx[0][0])
+    if len(strength_map.iloc[high_idx].index) > 1:
+        current_peak = strength_map.iloc[high_idx[0][0]].name
+    else:
+        current_peak = strength_map.iloc[high_idx].name
     found = False
     relocations = 0
     
-    print(current_peak)
+    print("Current peak: ", current_peak)
     edges = layout.loc[current_peak].connections
     print("Neighbours of ", current_peak, ": ", edges)
 
-    if not check_edges(edges, strength_map):
+    if check_edges(edges, strength_map, current_peak):
         return current_peak
 
     
@@ -503,7 +499,7 @@ def multi_leak_case(strength_map, state, leak_branch):
     for i in state["branches"].keys():
         if leak_branch in state["branches"][i]: leak_branch=i ### this changes leak_branch from node to index
     choices = list(state["branches"])
-    choices.remove(str(leak_branch))
+    choices.remove(leak_branch)
     second_branch = random.choice(choices)
     print(choices, second_branch)
     if len(state["branches"][second_branch]) < 2: 
