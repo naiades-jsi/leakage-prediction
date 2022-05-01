@@ -4,18 +4,18 @@ from processing import geo_converter as geo
 
 
 
-
-
 def run_crawler(state):
     if not state:
         state = {
             "iter": -1,
+            "state": "idle",
             "crawl_complete" : False,
             "crawl_res" : None,
             "converged" : False,
             "algorithm_res" : None,
             "branches": {},
-            "to_append": []
+            "to_append": [],
+            "node_list": []
         }
         strength_map = prediction.set_strength_map()
         strength_map.to_csv("./temp/strength_map.csv")
@@ -24,6 +24,7 @@ def run_crawler(state):
         strength_map = pd.read_csv("./temp/strength_map.csv", index_col=0)
         state = state
     res = prediction.hill_crawler(strength_map)
+    state["state"] = "running"
 
     if type(res) == str:
         print("Peak found at ", res)
@@ -38,6 +39,7 @@ def run_crawler(state):
         state["crawl_complete"] = False
         state["crawl_res"] = res
 
+    state["node_list"] = strength_map.index.tolist()
     return state
 
 
@@ -59,7 +61,7 @@ def run_calibrate(state):
         state["calibration_res"] = new_fall_exp.tolist()
 
     strength_map.to_csv("./temp/strength_map.csv")
-
+    state["node_list"] = strength_map.index.tolist()
     return state
 
 def run_branch_search(state):
@@ -72,7 +74,7 @@ def run_branch_search(state):
             continue
         else:
             state["to_append"].append(idx)
-
+    state["node_list"] = strength_map.index.tolist()
     return state
 
 
@@ -85,4 +87,5 @@ def run_poly_search(state):
     search_multi_res = prediction.multi_leak_case(strength_map, state, leak_branch)
     state["converged"] = True
     state["algorithm_res"] = {1:search_res, 2:search_multi_res}
+    state["state"] = "idle"
     return state

@@ -23,19 +23,21 @@ def raw_epsg3844_to_wgs84(x, y): ## conversion between coordinates
 
 def wgs84_to_3844(lat, lon): ## conversion between coordinates and node matching
     coords = pd.read_json("./storage/conversion_table.json", orient="index")
-    idx = np.where((np.round(coords.x_WGS84, 5) == np.round(lat, 5)) & (np.round(coords.y_WGS84, 5) == np.round(lon, 5)) & ~(coords.index.str.contains("-A", regex=True)))
-    node = coords.iloc[idx]
-    return node.index[0], node.x, node.y
+    coords_84 = pd.read_csv("./storage/coords_elements_epanet.csv", index_col="id")
+    idx = np.where(abs((np.round(coords_84.y, 5) - np.round(lat, 5))< 0.00005) & (abs(np.round(coords_84.x, 5) - np.round(lon, 5))< 0.00005) & ~(coords_84.index.str.contains("-A", regex=True)) & ~(coords_84.index.str.contains("-B", regex=True)))
+    node = coords_84.iloc[idx].index[0]
+    return node, coords.loc[node].x, coords.loc[node].y
 
 
 def epsg3844_to_wgs84(x, y): ## conversion between coordinates and node matching
-    coords = pd.read_json("./storage/conversion_table.json", orient="index")
-    idx = np.where((np.round(coords.x_WGS84, 4) == np.round(x, 4)) & (np.round(coords.y_WGS84, 4) == np.round(y, 4)) & ~(coords.index.str.contains("-A", regex=True)))
-    node = coords.iloc[idx]
-    return node.index[0], node.x_WGS84, node.y_WGS84
+    coords_84 = pd.read_csv("./storage/coords_elements_epanet.csv", index_col="id")
+    idx = np.where(abs((np.round(coords_84.y, 5) - np.round(y, 5))< 0.00005) & (abs(np.round(coords_84.x, 5) - np.round(x, 5))< 0.00005) & ~(coords_84.index.str.contains("-A", regex=True)) & ~(coords_84.index.str.contains("-B", regex=True)))
+    node = coords_84.iloc[idx]
+    return node.index[0], node.x.values[0], node.y.values[0]
 
 def get_geo_info(junction): ## conversion between coordinates and node matching
     coords = pd.read_json("./storage/conversion_table.json", orient="index")
     node = coords.loc[junction]
-    return node.index[0], node.x_WGS84, node.y_WGS84, node.x, node.y
+    return node.index[0], node.x_WGS84.values[0], node.y_WGS84.values[0], node.x.values[0], node.y.values[0]
 
+print(wgs84_to_3844(45.24974, 27.94054))

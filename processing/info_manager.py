@@ -5,7 +5,7 @@ import numpy as np
 import json
 from datetime import datetime
 
-noise_data_DIR = "C:/Users/Jaka/Desktop/Projects/NAIADES"
+noise_data_DIR = ""
 
 
 def write_state(state):

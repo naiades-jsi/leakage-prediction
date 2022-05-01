@@ -6,13 +6,36 @@ from time import sleep
 import os.path
 import pipe
 import json
+import argparse
 
+
+## parser 
+parser = argparse.ArgumentParser()
+parser.add_argument('--test', type=str, help="Setting this to will discard all new results upon completion. For debugging purposes.")
+args = parser.parse_args()
+IO.args = args
+
+
+## file perserver
+import shutil
+def copytree(src, dst, symlinks=False, ignore=None):
+    for item in os.listdir(src):
+        s = os.path.join(src, item)
+        d = os.path.join(dst, item)
+        if os.path.isdir(s):
+            shutil.copytree(s, d, symlinks, ignore)
+        else:
+            shutil.copy2(s, d)
+
+if args.test:
+    os.mkdir("testing_storage/")
+    copytree("temp/", "testing_storage/")
 
 
 
 runLoop = False
 testing = True
-day = 30 # number of seconds in a day - perform daily check
+day = 3600 # number of seconds in a day - perform daily check
 
 if os.path.exists("./temp/state.json"):
     print("Checking state...")
@@ -24,7 +47,7 @@ else:
     state = None
     IO.runStart_kafka()
     mng.write_logs("State not yet established, starting a fresh run...")
-    geo.conversion_table(config.layout_file_path, "./storage")
+    IO.update_node_list(state)
     mng.write_logs(f'Excecuting crawler')
     state = pipe.run_crawler(state)
     mng.write_logs(f'Crawler iteration complete. Nodes to check: {state["crawl_res"]}.')
@@ -34,7 +57,8 @@ else:
     
 
 while True:
-    is_moved, location, value = IO.read_kafka()
+    IO.update_node_list(state)
+    is_moved, location, value = IO.read_kafka(state)
 
 
     if state and not state["crawl_complete"] and is_moved:
@@ -81,8 +105,13 @@ while True:
     else:
         print("Waiting for relocation.")
         mng.write_logs("Waiting for relocation.")
-        sleep(day) 
-
+        if args.test:
+            copytree("testing_storage/", "temp/")
+            shutil.rmtree("testing_storage/", ignore_errors=True)
+            raise SystemExit
+            
+        sleep(day)
+           	
 
 
 

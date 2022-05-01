@@ -5,15 +5,20 @@ import pandas as pd
 import config
 import heapq
 from itertools import combinations
-import os
 import scipy
 import random
-from processing import geo_converter as geo
+from processing import info_manager as mng, geo_converter as geo
 from scipy import optimize
 
 
 layout = pd.read_json(f"{config.layout_DIR}clean_network.json", orient="index")
 diameter_info = pd.read_json("./layout/diameter_info.json", orient="index")
+node_list = []
+
+my_file = open("./layout/accessible_nodes.txt", "r")
+content_list = my_file.readlines()
+for entry in content_list:
+    node_list.append(entry)
 
 def make_connections(layout):
     connections_array = []
@@ -267,9 +272,9 @@ def hill_crawler(strength_map):
     high_idx = np.where(strength_map.strength == max(strength_map.strength))
     #print(high_idx, high_idx[0][0])
     if len(strength_map.iloc[high_idx].index) > 1:
-        current_peak = strength_map.iloc[high_idx[0][0]].name
+        current_peak = strength_map.iloc[high_idx[0][0]].index[0]
     else:
-        current_peak = strength_map.iloc[high_idx].name
+        current_peak = strength_map.iloc[high_idx].index[0]
     found = False
     relocations = 0
     
@@ -302,7 +307,7 @@ def hill_crawler(strength_map):
                         best = angle
                         check_next = candidate
 
-            if check_next not in strength_map:
+            if check_next not in strength_map.index and check_next in node_list:
                 to_check.append(check_next)
     if len(to_check) == 0:
         return current_peak
@@ -357,6 +362,7 @@ def set_branches(strength_map):
     nearby = layout.loc[origin].connections
     points = [[0, strength_map.loc[origin].strength]]
     appended = []
+    accessible_nodes = node_list
     for c in combinations(nearby, 2):
         line_0 = [[layout.loc[origin].x, layout.loc[origin].y], [layout.loc[c[0]].x, layout.loc[c[0]].y]]
         line_1 = [[layout.loc[origin].x, layout.loc[origin].y], [layout.loc[c[1]].x, layout.loc[c[1]].y]]
@@ -364,7 +370,7 @@ def set_branches(strength_map):
         branch_1 = []
         print(c[0], c[1])
         for node in layout.index:
-            if "-A" in node: continue
+            if node not in accessible_nodes: continue ####### if "-A" in node (skip node if it's not accessible IRL or is virtual)
             if calculate_distances(dijkstra_graph, origin)[node] > 200: continue
             angle_0 = get_angle_of_attack(line_0, node)
             angle_1 = get_angle_of_attack(line_1, node)

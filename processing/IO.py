@@ -1,4 +1,6 @@
+
 ### IO module for retrieving and sending sensor relocation instructions
+from re import A
 from numpy.lib.function_base import _DIMENSION_NAME
 import config
 import json
@@ -8,9 +10,11 @@ import processing.geo_converter as geo_converter
 from csv import writer
 from kafka import KafkaProducer, KafkaConsumer
 import time 
+args = None
 
 config_DIR = "./config/"
 dump_folder_DIR = config.noise_data_DIR
+bootstrap_server = config.kafka_bootstrap_server
 
 def create_holder(config_DIR):
     f = open(f'{config_DIR}output_form.json',)
@@ -62,24 +66,32 @@ def runStart_kafka():
     ## change starting sensors
     noise_sensors = {}
     i= 0
-    consumer = KafkaConsumer(bootstrap_servers= ["192.168.2.100:9092"],
-                auto_offset_reset= "latest",
-                enable_auto_commit= True,
-                auto_commit_interval_ms=2000,
-                group_id= "braila_noise_predictions",
+    consumer = KafkaConsumer(bootstrap_servers= [bootstrap_server],
+                auto_offset_reset= "earliest",
+                enable_auto_commit= False,
+                group_id= None,
                 value_deserializer= lambda x: json.loads(x.decode('utf-8')),
                 consumer_timeout_ms=3000
 
                 )
     for sensor_id in config.noise_sensor_ids:
-        sensor = "braila_noise"+sensor_id
+        sensor = config.kafka_input_topic_prefix+sensor_id
         consumer.subscribe([sensor])
         
         last_entry = None
+        last_valid = None
         for message in consumer:
             last_entry = message.value
-         
-        location = eval(last_entry["location"])
+            if not last_entry["noise_db"]:
+                print(sensor_id, "Noise was null. Checking previous entry")
+                last_entry = last_valid
+            else:
+                last_valid = message.value    
+	
+        if type(last_entry["location"]) != dict:
+            location = eval(last_entry["location"])
+        else:
+            location = last_entry["location"]
         junction, x, y = geo_converter.wgs84_to_3844(location["coordinates"][0], location["coordinates"][1])
         noise_sensors[i] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, last_entry["noise_db"]]
         i += 1
@@ -91,8 +103,9 @@ def runStart_kafka():
 
 
 def send_to_kafka(sensor, data, is_final):
-    producer = KafkaProducer(bootstrap_servers=["192.168.2.100:9092"])
-    topic = f"braila_leakage_position{sensor[-4:]}"
+    producer = KafkaProducer(bootstrap_servers=[bootstrap_server])
+    topic = f"{config.kafka_output_topic_prefix}{sensor[-4:]}"
+    print(data)
     if is_final: 
         topic = "braila_leakage_position2182"
         to_send = json.dumps({
@@ -106,7 +119,19 @@ def send_to_kafka(sensor, data, is_final):
             "position": data, ## data is [x, y]
             "final_location" : False
         })
-    producer.send(topic, to_send.encode("utf-8"))
+    if not args.test: print("TESTING IN PROGRESS") #producer.send(topic, to_send.encode("utf-8"))
+    return
+
+def send_alert(data, is_final=False):
+    producer = KafkaProducer(bootstrap_servers=[bootstrap_server])
+    if is_final:
+        topic = "braila_noise_final"
+        to_send = json.dumps({
+            "timestamp": int(time.time()),
+            "position": data["location"]["coordinates"], 
+            "final_location" : True
+            })
+        if not args.test: print("TESTING IN PROGRESS - ALERT") #producer.send(topic, to_send.encode("utf-8"))
     return
 
 def read_instructions(): ## add to read from api
@@ -175,9 +200,10 @@ def write_instructions_kafka(node, is_final=False, is_start=False):
     if is_final:
         data = {"location" : {"coordinates" : node}, "is_final": True}
         send_to_kafka("2182", data, is_final=True) 
+        send_alert(data, is_final=True)
     else:
         n_instructions = len(node) if type(node) == list else 1
-        sensors = ["braila_noise2182", "braila_noise5980", "braila_noise5981", "braila_noise5982"]
+        sensors = [config.kafka_input_topic_prefix+x for x in config.noise_sensor_ids]
         for node_idx in range(n_instructions):
             sensor = sensors[node_idx]
 
@@ -186,12 +212,16 @@ def write_instructions_kafka(node, is_final=False, is_start=False):
             elif n_instructions == 1:
                 junction, x_WGS84, y_WGS84, x, y = geo_converter.get_geo_info(node)
             
-            send_to_kafka(sensor, [x_WGS84, y_WGS84], is_final=False) ### add kafka functionality
+            send_to_kafka(sensor, [x_WGS84, y_WGS84], is_final=False)
     return
 
-def read_kafka(): ## read from kafka input topic
+def read_kafka(state): ## read from kafka input topic
     moved_sensors = {}
-    consumer = KafkaConsumer(bootstrap_servers= ["192.168.2.100:9092"],
+
+    ##checking state for new sensor locations to compare
+    node_list = state["node_list"]
+
+    consumer = KafkaConsumer(bootstrap_servers= [bootstrap_server],
                 auto_offset_reset= "latest",
                 enable_auto_commit= True,
                 auto_commit_interval_ms=2000,
@@ -200,27 +230,28 @@ def read_kafka(): ## read from kafka input topic
                 consumer_timeout_ms= 3000
                 )
     for sensor_id in config.noise_sensor_ids:
-        sensor = "braila_noise"+sensor_id
+        sensor = config.kafka_input_topic_prefix+sensor_id
         
         consumer.subscribe([sensor])
         last_entry = None
         for message in consumer:
             last_entry = message.value
             print(sensor, last_entry)
-        if last_entry and last_entry["isMovedToNewLocation"]:
+        if last_entry:
             moved_sensors[sensor] = last_entry
         
-    for sensor in moved_sensors:
+    for sensor in moved_sensors: ## "moved sensor" is not necessarily moved
         try:
             location = eval(moved_sensors[sensor]["location"])
             junction, x, y = geo_converter.wgs84_to_3844(location["coordinates"][0], location["coordinates"][1])
+            if junction in node_list: ## code below is for sensors that have been moved
+                continue
             noise_df = pd.read_csv("./temp/noise_sensors.csv", index_col=0)
-            noise_df.loc[len(noise_df.index)] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, moved_sensors[sensor]["noise_db"]] ## and this
+            noise_df.loc[len(noise_df.index)] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, moved_sensors[sensor]["noise_db"]]
             noise_df.to_csv("./temp/noise_sensors.csv")
             strength_map = pd.read_csv("./temp/strength_map.csv", index_col=0)
-            strength_map.loc[junction] = [x.item(), y.item(), moved_sensors[sensor]["noise_db"]] ### this too
+            strength_map.loc[junction] = [x.item(), y.item(), moved_sensors[sensor]["noise_db"]] 
             strength_map.to_csv("./temp/strength_map.csv")
-    
         
         except Exception as e:
             print(e, "-- In IO.read_kafka")
@@ -232,4 +263,76 @@ def read_kafka(): ## read from kafka input topic
     else:
         return False, None, None
 
+def check_accessible_nodes_kafka(topic=config.kafka_accessible_nodes_topic):
+    changes = []
+    changed = None
+
+    consumer = KafkaConsumer(bootstrap_servers= [bootstrap_server],
+                auto_offset_reset= "earliest",
+                enable_auto_commit= True,
+                auto_commit_interval_ms=2000,
+                group_id= "braila_noise_predictions",
+                value_deserializer= lambda x: json.loads(x.decode('utf-8')),
+                consumer_timeout_ms= 3000
+                )
     
+    consumer.subscribe([topic])
+    for message in consumer:
+        changes.append(message.value)
+        
+    if len(changes) > 0:
+        changed = {"add":[], "del":[]}
+    for entry in changes:
+        location = eval(entry["location"])
+        junction, x, y = geo_converter.wgs84_to_3844(location[0], location[1])
+        action = entry["action"]
+        changed[action].append(junction)
+
+    return changed
+
+def update_node_list(state, PATH="./layout/accessible_nodes.txt"):
+    node_list = []
+    my_file = open(PATH, "r")
+    content_list = my_file.readlines()
+    for entry in content_list:
+        node_list.append(entry)
+
+    changed = check_accessible_nodes_kafka()
+
+    for node in changed["add"]: ##check state.state currently has the same outcome
+        if not state or state.state == "idle":
+            if node not in node_list:
+                node_list.append(node)
+            else:
+                print("Node added already in node_list ", node)
+            
+        elif state.state == "running":
+            if node not in node_list:
+                node_list.append(node)
+            else:
+                print("Node added already in node_list ", node)
+
+    for node in changed["del"]:
+        if not state or state.state == "idle":
+            if node in node_list:
+                node_list.remove(node)
+            else:
+                print("Node removed not in node_list ", node)
+            
+        elif state.state == "running":
+            if node not in state["crawl_res"]:
+                if node not in node_list:
+                    node_list.append(node)
+                else:
+                    print("Node removed not in node_list ", node)
+            else:
+                if node not in node_list:
+                    node_list.append(node)
+                    state["rerun_needed"] = True ## not sure if this is even needed
+                else:
+                    print("Node removed not in node_list ", node)
+
+    
+    with open(PATH, "w") as outfile:
+        outfile.write("\n".join(str(item) for item in node_list))
+    return
