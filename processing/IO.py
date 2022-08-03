@@ -1,7 +1,9 @@
 
 ### IO module for retrieving and sending sensor relocation instructions
+from multiprocessing import current_process
 from re import A
 from numpy.lib.function_base import _DIMENSION_NAME
+from sympy import prime
 import config
 import json
 import pandas as pd
@@ -10,11 +12,24 @@ import processing.geo_converter as geo_converter
 from csv import writer
 from kafka import KafkaProducer, KafkaConsumer
 import time 
+from typing import Any, Dict, List, Optional
+import requests
+import logging
+
 args = None
 
 config_DIR = "./config/"
 dump_folder_DIR = config.noise_data_DIR
 bootstrap_server = config.kafka_bootstrap_server
+# This should be changet to fit the needs of the download (to alert)
+headers = {
+    "fiware-Service": "braila",
+    "fiware-ServicePath": "/"
+}
+ip = config.fiware_ip
+port = config.fiware_port
+
+
 
 def create_holder(config_DIR):
     f = open(f'{config_DIR}output_form.json',)
@@ -22,12 +37,26 @@ def create_holder(config_DIR):
     f.close()
     return holder
 
+def get_content(entity_id) -> Dict[str, Any]:
+    # Send the get request
+    base_url = "http://" + ip + ":" + port + "/v2/entities/" + entity_id
+    try:
+        r = requests.get(base_url, headers=headers)
+    except requests.exceptions.RequestException as e:  # This is the correct syntax
+        logging.warning(e)
+    else:
+        #logging.info('Successfuly obtained response from API ' + time.ctime())
 
-def save_instructions(): # saves retrieved data from api to /dump/log 
+        # If status code is not 200 raise an error
+        if(r.status_code != requests.codes.ok):
+            print("Data could not be obtained. Error code: {}.".format( r.status_code))
+            return
 
-    return
+        print("{}: Successfuly obtained form API with status code: {}.".format(time.ctime(), r.status_code))
 
+        body = r.json()
 
+        return body
 
 def runStart():
     ## change starting sensors
@@ -65,6 +94,7 @@ def runStart():
 def runStart_kafka():
     ## change starting sensors
     noise_sensors = {}
+    current_nodes = []
     i= 0
     consumer = KafkaConsumer(bootstrap_servers= [bootstrap_server],
                 auto_offset_reset= "earliest",
@@ -87,19 +117,20 @@ def runStart_kafka():
                 last_entry = last_valid
             else:
                 last_valid = message.value    
-	
+        print(last_entry)
         if type(last_entry["location"]) != dict:
             location = eval(last_entry["location"])
         else:
             location = last_entry["location"]
         junction, x, y = geo_converter.wgs84_to_3844(location["coordinates"][0], location["coordinates"][1])
+        current_nodes.append(junction)
         noise_sensors[i] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, last_entry["noise_db"]]
         i += 1
             
 
     noise_df = pd.DataFrame.from_dict(noise_sensors, columns=["ENTITY ID","LOCATION","LONGITUDE","LATITUDE","INP NAME","READING"], orient="index")
     noise_df.to_csv("./temp/noise_sensors.csv")
-
+    return current_nodes
 
 
 def send_to_kafka(sensor, data, is_final):
@@ -119,7 +150,9 @@ def send_to_kafka(sensor, data, is_final):
             "position": data, ## data is [x, y]
             "final_location" : False
         })
-    if not args.test: print("TESTING IN PROGRESS") #producer.send(topic, to_send.encode("utf-8"))
+    if args.test: print("TESTING IN PROGRESS")
+    else:
+        producer.send(topic, to_send.encode("utf-8"))
     return
 
 def send_alert(data, is_final=False):
@@ -131,7 +164,10 @@ def send_alert(data, is_final=False):
             "position": data["location"]["coordinates"], 
             "final_location" : True
             })
-        if not args.test: print("TESTING IN PROGRESS - ALERT") #producer.send(topic, to_send.encode("utf-8"))
+        if args.test: 
+            print("TESTING IN PROGRESS - ALERT")
+        else:
+            producer.send(topic, to_send.encode("utf-8"))
     return
 
 def read_instructions(): ## add to read from api
@@ -144,7 +180,6 @@ def read_instructions(): ## add to read from api
                 parsed = last_entry.to_numpy()
                 location = eval(parsed[5])
                 junction, x, y = geo_converter.wgs84_to_3844(location["coordinates"][0], location["coordinates"][1])
-                save_instructions()
                 noise_df = pd.read_csv("./temp/noise_sensors.csv", index_col=0)
                 noise_df.loc[len(noise_df.index)] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, parsed[2]]
                 noise_df.to_csv("./temp/noise_sensors.csv")
@@ -212,14 +247,17 @@ def write_instructions_kafka(node, is_final=False, is_start=False):
             elif n_instructions == 1:
                 junction, x_WGS84, y_WGS84, x, y = geo_converter.get_geo_info(node)
             
-            send_to_kafka(sensor, [x_WGS84, y_WGS84], is_final=False)
+            try: 
+                send_to_kafka(sensor, [x_WGS84.values[0], y_WGS84.values[0]], is_final=False)
+            except AttributeError:
+                send_to_kafka(sensor, [x_WGS84, y_WGS84], is_final=False)
     return
 
 def read_kafka(state): ## read from kafka input topic
     moved_sensors = {}
 
     ##checking state for new sensor locations to compare
-    node_list = state["node_list"]
+    node_list = state["current_positions"]
 
     consumer = KafkaConsumer(bootstrap_servers= [bootstrap_server],
                 auto_offset_reset= "latest",
@@ -239,12 +277,19 @@ def read_kafka(state): ## read from kafka input topic
             print(sensor, last_entry)
         if last_entry:
             moved_sensors[sensor] = last_entry
-        
-    for sensor in moved_sensors: ## "moved sensor" is not necessarily moved
+
+    current_positions = []
+    n_moved = 0
+
+    for sensor in moved_sensors: ## "moved sensor" is not necessarily moved irl
         try:
             location = eval(moved_sensors[sensor]["location"])
             junction, x, y = geo_converter.wgs84_to_3844(location["coordinates"][0], location["coordinates"][1])
+            current_positions.append(junction)
+            print(junction)
+            print(node_list)
             if junction in node_list: ## code below is for sensors that have been moved
+                print(junction, " already in node_list")
                 continue
             noise_df = pd.read_csv("./temp/noise_sensors.csv", index_col=0)
             noise_df.loc[len(noise_df.index)] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, moved_sensors[sensor]["noise_db"]]
@@ -252,53 +297,54 @@ def read_kafka(state): ## read from kafka input topic
             strength_map = pd.read_csv("./temp/strength_map.csv", index_col=0)
             strength_map.loc[junction] = [x.item(), y.item(), moved_sensors[sensor]["noise_db"]] 
             strength_map.to_csv("./temp/strength_map.csv")
+            n_moved += 1
         
         except Exception as e:
             print(e, "-- In IO.read_kafka")
-            return False, None, None
-    print(moved_sensors.keys())
-    if len(moved_sensors.keys()) > 0:
-        return True, "junction", "parsed[2]" ## parsed[2] and [5] are noise_db and location respectively ------- DONT NEED LAST 2 ANYWAY
+            print("Tried for ", moved_sensors[sensor])
+            return False, None
+    if n_moved > 0:
+        print("N moved is more than 0", n_moved)
+        return True, current_positions
     
     else:
-        return False, None, None
+        return False, current_positions
 
-def check_accessible_nodes_kafka(topic=config.kafka_accessible_nodes_topic):
-    changes = []
-    changed = None
+def check_accessible_nodes_kafka(path="./layout/accessible_nodes.txt"):
+    node_list_raw = get_content(config.fiware_add_del_nodes_alert_id)["https://uri.etsi.org/ngsi-ld/data"]["value"]
+    parsed_nodes = []
+    #print(node_list_raw)
+    for id in node_list_raw.keys():
+        if "id" in id:
+            node_name = f"Jonctiune-{id[3:]}"
+        else:
+            node_name = f"Jonctiune-{id}"
 
-    consumer = KafkaConsumer(bootstrap_servers= [bootstrap_server],
-                auto_offset_reset= "earliest",
-                enable_auto_commit= True,
-                auto_commit_interval_ms=2000,
-                group_id= "braila_noise_predictions",
-                value_deserializer= lambda x: json.loads(x.decode('utf-8')),
-                consumer_timeout_ms= 3000
-                )
-    
-    consumer.subscribe([topic])
-    for message in consumer:
-        changes.append(message.value)
+        if node_list_raw[id][-1] == "exclude" or node_list_raw[id][0] == None or node_list_raw[id][1] == None:
+            #print(id, " excluded.")
+            pass
         
-    if len(changes) > 0:
-        changed = {"add":[], "del":[]}
-    for entry in changes:
-        location = eval(entry["location"])
-        junction, x, y = geo_converter.wgs84_to_3844(location[0], location[1])
-        action = entry["action"]
-        changed[action].append(junction)
+        elif node_list_raw[id][-1] == "add" or node_list_raw[id][-1] == None:
+            parsed_nodes.append(node_name)
+        
+        else:
+            print("While checking node accessibility, node with id --{}-- had unclear instructions.".format(id))
 
-    return changed
+    with open(path, "w") as outfile:
+        outfile.write("\n".join(str(item) for item in parsed_nodes))
+    
+    return 
 
-def update_node_list(state, PATH="./layout/accessible_nodes.txt"):
-    node_list = []
-    my_file = open(PATH, "r")
+def update_node_list(state, path="./layout/accessible_nodes.txt"):
+    """node_list = []
+    my_file = open(path, "r")
     content_list = my_file.readlines()
     for entry in content_list:
         node_list.append(entry)
-
+"""
     changed = check_accessible_nodes_kafka()
-
+    return
+"""
     for node in changed["add"]: ##check state.state currently has the same outcome
         if not state or state.state == "idle":
             if node not in node_list:
@@ -333,6 +379,16 @@ def update_node_list(state, PATH="./layout/accessible_nodes.txt"):
                     print("Node removed not in node_list ", node)
 
     
-    with open(PATH, "w") as outfile:
-        outfile.write("\n".join(str(item) for item in node_list))
-    return
+    with open(path, "w") as outfile:
+        outfile.write("\n".join(str(item) for item in node_list))"""
+    
+
+
+def check_trigger():
+    print("Checking trigger...")
+    res = get_content(config.fiware_trigger_alert_id)
+    triggered = res['https://uri.etsi.org/ngsi-ld/description']["value"]
+    triggered = True if triggered == "true" or triggered == "True" else False
+    sensor_positions = res["https://uri.etsi.org/ngsi-ld/data"]["value"]
+    return triggered, sensor_positions
+    

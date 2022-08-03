@@ -1,5 +1,6 @@
 ## make state inside temp
 ## make logs of relocations
+from re import A
 import config
 from processing import IO, geo_converter as geo, info_manager as mng
 from time import sleep
@@ -12,6 +13,8 @@ import argparse
 ## parser 
 parser = argparse.ArgumentParser()
 parser.add_argument('--test', type=str, help="Setting this to will discard all new results upon completion. For debugging purposes.")
+parser.add_argument('--restart', type=str, help="Delete temporary files and start a fresh run.")
+parser.add_argument('--clear', type=str, help="Clears temporary files and exits.")
 args = parser.parse_args()
 IO.args = args
 
@@ -31,11 +34,27 @@ if args.test:
     os.mkdir("testing_storage/")
     copytree("temp/", "testing_storage/")
 
+if args.restart:
+    shutil.rmtree('temp/')
+    os.mkdir("temp/")
 
+if args.clear:
+    shutil.rmtree('temp/')
+    os.mkdir("temp/")
+    exit()
 
-runLoop = False
-testing = True
-day = 3600 # number of seconds in a day - perform daily check
+run_loop = False
+testing = False
+day = 30 # number of seconds in a day - perform daily check
+IO.check_accessible_nodes_kafka()
+while not run_loop:
+    run_loop, values = IO.check_trigger()
+    if run_loop:
+        print("Trigger True, waiting 10 seconds")
+        sleep(10)
+    else:
+        sleep(3600)
+    
 
 if os.path.exists("./temp/state.json"):
     print("Checking state...")
@@ -45,20 +64,22 @@ if os.path.exists("./temp/state.json"):
 else: 
     print("State not yet established.")
     state = None
-    IO.runStart_kafka()
+    current_positions = IO.runStart_kafka()
     mng.write_logs("State not yet established, starting a fresh run...")
-    IO.update_node_list(state)
+    #IO.update_node_list(state)
     mng.write_logs(f'Excecuting crawler')
     state = pipe.run_crawler(state)
+    state["current_positions"] = current_positions
     mng.write_logs(f'Crawler iteration complete. Nodes to check: {state["crawl_res"]}.')
     mng.write_state(state)
     IO.write_instructions_kafka(state["crawl_res"], is_start=True)
     mng.write_logs("Run completed successfully! Waiting for relocation.")
+    sleep(20)
     
 
 while True:
     IO.update_node_list(state)
-    is_moved, location, value = IO.read_kafka(state)
+    is_moved, current_positions = IO.read_kafka(state)
 
 
     if state and not state["crawl_complete"] and is_moved:

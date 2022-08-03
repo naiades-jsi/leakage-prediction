@@ -38,6 +38,5 @@ def epsg3844_to_wgs84(x, y): ## conversion between coordinates and node matching
 def get_geo_info(junction): ## conversion between coordinates and node matching
     coords = pd.read_json("./storage/conversion_table.json", orient="index")
     node = coords.loc[junction]
-    return node.index[0], node.x_WGS84.values[0], node.y_WGS84.values[0], node.x.values[0], node.y.values[0]
+    return node.index[0], node.x_WGS84, node.y_WGS84, node.x, node.y
 
-print(wgs84_to_3844(45.24974, 27.94054))

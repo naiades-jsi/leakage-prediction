@@ -1,5 +1,6 @@
 ### algorithm module
 ### init, prediction, recalibration
+from math import ceil
 import numpy as np
 import pandas as pd
 import config
@@ -284,7 +285,12 @@ def hill_crawler(strength_map):
 
     if check_edges(edges, strength_map, current_peak):
         return current_peak
+    node_list = []
 
+    my_file = open("./layout/accessible_nodes.txt", "r")
+    content_list = my_file.readlines()
+    for entry in content_list:
+        node_list.append(entry)
     
     to_check = []
     for edge in edges:
@@ -355,7 +361,7 @@ def get_spread_info(source, endpoint):
     
     return distance, total_split_loss
 
-def set_branches(strength_map):
+def set_branches(strength_map, threshold_distance=200):
     origin = strength_map.loc[strength_map['strength'] == strength_map['strength'].max()][:1].index.item()
     next_highest_node = strength_map.sort_values(by=["strength"], ascending=False).iloc[1].name
     branches = {}
@@ -370,8 +376,8 @@ def set_branches(strength_map):
         branch_1 = []
         print(c[0], c[1])
         for node in layout.index:
-            if node not in accessible_nodes: continue ####### if "-A" in node (skip node if it's not accessible IRL or is virtual)
-            if calculate_distances(dijkstra_graph, origin)[node] > 200: continue
+            if node not in accessible_nodes: continue ####### (skip node if it's not accessible IRL or is virtual)
+            if calculate_distances(dijkstra_graph, origin)[node] > threshold_distance: continue
             angle_0 = get_angle_of_attack(line_0, node)
             angle_1 = get_angle_of_attack(line_1, node)
             if angle_0 < 4 and len(branch_0) < 4: branch_0.append(node)
@@ -384,24 +390,38 @@ def set_branches(strength_map):
             appended.append(c[1])
     return branches
 
+def failsafe(state):
+    branches = {}
+    branches["0"] = state["node_list"][:ceil(len(state["node_list"])/2)]
+    branches["1"] = state["node_list"][ceil(len(state["node_list"])/2):]
+    state["branches"] = branches
+    return state
+
 def level_normalization(origin, endpoint, signal, info_df=diameter_info, norm=50): ## norm of 50 is already in radius
     trail = get_trail(dijkstra_graph, origin)[endpoint]
     if endpoint==origin:
-        radius = info_df.loc[f"{origin},{layout.loc[origin].connections[0]}"].diameter.item()/2
+        try:
+            radius = info_df.loc[f"{origin},{layout.loc[origin].connections[0]}"].diameter.item()/2
+        except KeyError:
+            radius = 50 ## most probable outcome
         input_signal_mwm = 10**(signal/10) ## convert from dB to mW/m^2
         signal_at_100 = input_signal_mwm*(norm**2/radius**2)
         normed_signal = 10*np.log10(signal_at_100/1)
         return normed_signal
-        
-    if f"{trail[-1][0]},{trail[-2][0]}" in info_df.index:
-        radius = info_df.loc[f"{trail[-1][0]},{trail[-2][0]}"].diameter.item()/2
-        print(radius)
-    elif  f"{trail[-1][0]},{trail[-3][0]}" in info_df.index:
-        radius = info_df.loc[f"{trail[-1][0]},{trail[-3][0]}"].diameter.item()/2
-        print(radius)
-    else:
+
+    try:    
+        if f"{trail[-1][0]},{trail[-2][0]}" in info_df.index:
+            radius = info_df.loc[f"{trail[-1][0]},{trail[-2][0]}"].diameter.item()/2
+            print(radius)
+        elif  f"{trail[-1][0]},{trail[-3][0]}" in info_df.index:
+            radius = info_df.loc[f"{trail[-1][0]},{trail[-3][0]}"].diameter.item()/2
+            print(radius)
+        else:
+            radius = 50
+            print("No entry found.")
+    except IndexError:
         radius = 50
-        print("No entry found.")
+        print("Index error in normalization step.")
     
     input_signal_mwm = 10**(signal/10) ## convert from dB to mW/m^2
     signal_at_100 = input_signal_mwm*(norm**2/radius**2)
