@@ -45,7 +45,7 @@ if args.clear:
 
 run_loop = False
 testing = False
-day = 30 # number of seconds in a day - perform daily check
+day = 24* 3600# number of seconds in a day - perform daily check
 IO.check_accessible_nodes_kafka()
 while not run_loop:
     run_loop, values = IO.check_trigger()
@@ -74,7 +74,7 @@ else:
     mng.write_state(state)
     IO.write_instructions_kafka(state["crawl_res"], is_start=True)
     mng.write_logs("Run completed successfully! Waiting for relocation.")
-    sleep(20)
+    sleep(day)
     
 
 while True:
