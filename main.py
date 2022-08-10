@@ -1,5 +1,6 @@
 ## make state inside temp
 ## make logs of relocations
+import sys
 from re import A
 import config
 from processing import IO, geo_converter as geo, info_manager as mng
