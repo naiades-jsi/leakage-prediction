@@ -19,8 +19,7 @@ parser.add_argument('--clear', type=str, help="Clears temporary files and exits.
 args = parser.parse_args()
 IO.args = args
 
-
-## file perserver
+## file memory in case of testing/debugging
 import shutil
 def copytree(src, dst, symlinks=False, ignore=None):
     for item in os.listdir(src):
@@ -46,8 +45,9 @@ if args.clear:
 
 run_loop = False
 testing = False
-day = 24* 3600# number of seconds in a day - perform daily check
+day = 24* 3600 # number of seconds in a day - perform daily check
 IO.check_accessible_nodes_kafka()
+
 while not run_loop:
     run_loop, values = IO.check_trigger()
     if run_loop:
@@ -56,15 +56,17 @@ while not run_loop:
     else:
         sleep(3600)
     
-
+# Checking if state already exists
 if os.path.exists("./temp/state.json"):
     print("Checking state...")
     f = open('./temp/state.json',)
     state = json.load(f)
     f.close()
+    
 else: 
     print("State not yet established.")
     state = None
+    # Get current positions of each noise sensor and create temp/noise_sensors.csv
     current_positions = IO.runStart_kafka()
     mng.write_logs("State not yet established, starting a fresh run...")
     #IO.update_node_list(state)
@@ -75,6 +77,7 @@ else:
     mng.write_state(state)
     IO.write_instructions_kafka(state["crawl_res"], is_start=True)
     mng.write_logs("Run completed successfully! Waiting for relocation.")
+    print("Waiting for relocation.")
     sleep(day)
     
 
@@ -130,7 +133,7 @@ while True:
         if args.test:
             copytree("testing_storage/", "temp/")
             shutil.rmtree("testing_storage/", ignore_errors=True)
-            raise SystemExit
+            exit()
             
         sleep(day)
            	

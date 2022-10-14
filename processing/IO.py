@@ -138,17 +138,18 @@ def send_to_kafka(sensor, data, is_final):
     topic = f"{config.kafka_output_topic_prefix}{sensor[-4:]}"
     print(data)
     if is_final: 
-        topic = "braila_leakage_position2182"
+        '''topic = "braila_leakage_position2182"
         to_send = json.dumps({
             "timestamp": int(time.time()),
             "position": data["location"]["coordinates"], 
-            "final_location" : True
-        })
+            "is_final" : True
+        })'''
+        continue
     else: 
         to_send = json.dumps({
             "timestamp": int(time.time()),
             "position": data, ## data is [x, y]
-            "final_location" : False
+            "is_final" : False
         })
     if args.test: print("TESTING IN PROGRESS")
     else:
@@ -284,6 +285,7 @@ def read_kafka(state): ## read from kafka input topic
     for sensor in moved_sensors: ## "moved sensor" is not necessarily moved irl
         try:
             location = eval(moved_sensors[sensor]["location"])
+            newLocation = eval(moved_sensors[sensor]["isMovedToNewLocation"])
             junction, x, y = geo_converter.wgs84_to_3844(location["coordinates"][0], location["coordinates"][1])
             current_positions.append(junction)
             print(junction)
@@ -291,6 +293,10 @@ def read_kafka(state): ## read from kafka input topic
             if junction in node_list: ## code below is for sensors that have been moved
                 print(junction, " already in node_list")
                 continue
+            if location["coordinates"][0] != newLocation["coordinates"][0]:
+                print(f"Sensor {sensor} didn't move.")
+                continue
+            
             noise_df = pd.read_csv("./temp/noise_sensors.csv", index_col=0)
             noise_df.loc[len(noise_df.index)] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, moved_sensors[sensor]["noise_db"]]
             noise_df.to_csv("./temp/noise_sensors.csv")
