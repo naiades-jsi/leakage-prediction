@@ -11,7 +11,7 @@ import os
 import processing.geo_converter as geo_converter
 from csv import writer
 from kafka import KafkaProducer, KafkaConsumer
-import time 
+import time
 from typing import Any, Dict, List, Optional
 import requests
 import logging
@@ -80,13 +80,13 @@ def runStart():
             i += 1
             if loudest_noise < float(parsed[2]):
                 loudest_noise = float(parsed[2])
-            
+
         except Exception as e:
             print(e)
 
     init_param["starting_sensors"] = starting_sensors
     init_param["source_strength"]  = loudest_noise
-    with open("./config/init_param.json", "w") as outfile: 
+    with open("./config/init_param.json", "w") as outfile:
             json.dump(init_param, outfile)
     noise_df = pd.DataFrame.from_dict(noise_sensors, columns=["ENTITY ID","LOCATION","LONGITUDE","LATITUDE","INP NAME","READING"], orient="index")
     noise_df.to_csv("./temp/noise_sensors.csv")
@@ -107,7 +107,7 @@ def runStart_kafka():
     for sensor_id in config.noise_sensor_ids:
         sensor = config.kafka_input_topic_prefix+sensor_id
         consumer.subscribe([sensor])
-        
+
         last_entry = None
         last_valid = None
         for message in consumer:
@@ -116,7 +116,7 @@ def runStart_kafka():
                 print(sensor_id, "Noise was null. Checking previous entry")
                 last_entry = last_valid
             else:
-                last_valid = message.value    
+                last_valid = message.value
         print(last_entry)
         if type(last_entry["location"]) != dict:
             location = eval(last_entry["location"])
@@ -126,7 +126,7 @@ def runStart_kafka():
         current_nodes.append(junction)
         noise_sensors[i] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, last_entry["noise_db"]]
         i += 1
-            
+
 
     noise_df = pd.DataFrame.from_dict(noise_sensors, columns=["ENTITY ID","LOCATION","LONGITUDE","LATITUDE","INP NAME","READING"], orient="index")
     noise_df.to_csv("./temp/noise_sensors.csv")
@@ -137,15 +137,15 @@ def send_to_kafka(sensor, data, is_final):
     producer = KafkaProducer(bootstrap_servers=[bootstrap_server])
     topic = f"{config.kafka_output_topic_prefix}{sensor[-4:]}"
     print(data)
-    if is_final: 
+    if is_final:
         '''topic = "braila_leakage_position2182"
         to_send = json.dumps({
             "timestamp": int(time.time()),
-            "position": data["location"]["coordinates"], 
+            "position": data["location"]["coordinates"],
             "is_final" : True
         })'''
-        continue
-    else: 
+        pass
+    else:
         to_send = json.dumps({
             "timestamp": int(time.time()),
             "position": data, ## data is [x, y]
@@ -162,10 +162,10 @@ def send_alert(data, is_final=False):
         topic = "braila_noise_final"
         to_send = json.dumps({
             "timestamp": int(time.time()),
-            "position": data["location"]["coordinates"], 
+            "position": data["location"]["coordinates"],
             "final_location" : True
             })
-        if args.test: 
+        if args.test:
             print("TESTING IN PROGRESS - ALERT")
         else:
             producer.send(topic, to_send.encode("utf-8"))
@@ -196,13 +196,13 @@ def read_instructions(): ## add to read from api
                 return True, junction, parsed[2] ## parsed[2] and [5] are noise_db and location respectively
             else:
                 continue
-            
+
         except Exception as e:
             print(e, "-- In IO.read_instructions")
-            
+
             return False, None, None
     return False, None, None
-        
+
 
 
 def write_instructions(node, is_final=False, is_start=False):
@@ -235,7 +235,7 @@ def write_instructions(node, is_final=False, is_start=False):
 def write_instructions_kafka(node, is_final=False, is_start=False):
     if is_final:
         data = {"location" : {"coordinates" : node}, "is_final": True}
-        send_to_kafka("2182", data, is_final=True) 
+        send_to_kafka("2182", data, is_final=True)
         send_alert(data, is_final=True)
     else:
         n_instructions = len(node) if type(node) == list else 1
@@ -247,8 +247,8 @@ def write_instructions_kafka(node, is_final=False, is_start=False):
                 junction, x_WGS84, y_WGS84, x, y = geo_converter.get_geo_info(node[node_idx])
             elif n_instructions == 1:
                 junction, x_WGS84, y_WGS84, x, y = geo_converter.get_geo_info(node)
-            
-            try: 
+
+            try:
                 send_to_kafka(sensor, [x_WGS84.values[0], y_WGS84.values[0]], is_final=False)
             except AttributeError:
                 send_to_kafka(sensor, [x_WGS84, y_WGS84], is_final=False)
@@ -270,7 +270,7 @@ def read_kafka(state): ## read from kafka input topic
                 )
     for sensor_id in config.noise_sensor_ids:
         sensor = config.kafka_input_topic_prefix+sensor_id
-        
+
         consumer.subscribe([sensor])
         last_entry = None
         for message in consumer:
@@ -296,15 +296,15 @@ def read_kafka(state): ## read from kafka input topic
             if location["coordinates"][0] != newLocation["coordinates"][0]:
                 print(f"Sensor {sensor} didn't move.")
                 continue
-            
+
             noise_df = pd.read_csv("./temp/noise_sensors.csv", index_col=0)
             noise_df.loc[len(noise_df.index)] = [sensor, "name", location["coordinates"][0], location["coordinates"][1], junction, moved_sensors[sensor]["noise_db"]]
             noise_df.to_csv("./temp/noise_sensors.csv")
             strength_map = pd.read_csv("./temp/strength_map.csv", index_col=0)
-            strength_map.loc[junction] = [x.item(), y.item(), moved_sensors[sensor]["noise_db"]] 
+            strength_map.loc[junction] = [x.item(), y.item(), moved_sensors[sensor]["noise_db"]]
             strength_map.to_csv("./temp/strength_map.csv")
             n_moved += 1
-        
+
         except Exception as e:
             print(e, "-- In IO.read_kafka")
             print("Tried for ", moved_sensors[sensor])
@@ -312,7 +312,7 @@ def read_kafka(state): ## read from kafka input topic
     if n_moved > 0:
         print("N moved is more than 0", n_moved)
         return True, current_positions
-    
+
     else:
         return False, current_positions
 
@@ -329,17 +329,17 @@ def check_accessible_nodes_kafka(path="./layout/accessible_nodes.txt"):
         if node_list_raw[id][-1] == "exclude" or node_list_raw[id][0] == None or node_list_raw[id][1] == None:
             #print(id, " excluded.")
             pass
-        
+
         elif node_list_raw[id][-1] == "add" or node_list_raw[id][-1] == None:
             parsed_nodes.append(node_name)
-        
+
         else:
             print("While checking node accessibility, node with id --{}-- had unclear instructions.".format(id))
 
     with open(path, "w") as outfile:
         outfile.write("\n".join(str(item) for item in parsed_nodes))
-    
-    return 
+
+    return
 
 def update_node_list(state, path="./layout/accessible_nodes.txt"):
     """node_list = []
@@ -357,7 +357,7 @@ def update_node_list(state, path="./layout/accessible_nodes.txt"):
                 node_list.append(node)
             else:
                 print("Node added already in node_list ", node)
-            
+
         elif state.state == "running":
             if node not in node_list:
                 node_list.append(node)
@@ -370,7 +370,7 @@ def update_node_list(state, path="./layout/accessible_nodes.txt"):
                 node_list.remove(node)
             else:
                 print("Node removed not in node_list ", node)
-            
+
         elif state.state == "running":
             if node not in state["crawl_res"]:
                 if node not in node_list:
@@ -384,10 +384,10 @@ def update_node_list(state, path="./layout/accessible_nodes.txt"):
                 else:
                     print("Node removed not in node_list ", node)
 
-    
+
     with open(path, "w") as outfile:
         outfile.write("\n".join(str(item) for item in node_list))"""
-    
+
 
 
 def check_trigger():
@@ -397,4 +397,3 @@ def check_trigger():
     triggered = True if triggered == "true" or triggered == "True" else False
     sensor_positions = res["https://uri.etsi.org/ngsi-ld/data"]["value"]
     return triggered, sensor_positions
-    
