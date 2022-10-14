@@ -1,5 +1,5 @@
 begin = True
-kafka_bootstrap_server = "188.166.121.54:9092"
+kafka_bootstrap_server = "localhost:9092"
 layout_DIR = "./layout/"
 layout_file_path = "./layout/clean_network.json"
 noise_data_DIR = "../dump/" 
