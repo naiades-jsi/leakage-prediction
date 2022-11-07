@@ -2,3 +2,4 @@
 /storage/log.txt
 __pycache__/
 *.pyc
+/testing_storage

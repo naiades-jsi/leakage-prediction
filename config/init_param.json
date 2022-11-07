@@ -1,1 +1,0 @@
-{"iter": 0, "prediction": null, "predicted_res": null, "calibration": null, "calibration_res": null, "source_strength": 30.0, "fall_exp": 0.3, "junction_division": "equal", "tolerance": 1, "upper_limit": 40, "starting_sensors": ["Jonctiune-2207", "Jonctiune-J-16", "Jonctiune-1641", "Jonctiune-2203"], "avg_division": 1, "source_curve": [], "pseudo_nodes": []}
