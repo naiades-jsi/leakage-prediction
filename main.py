@@ -10,6 +10,7 @@ import os.path
 import pipe
 import json
 from optparse import OptionParser
+import shutil
 
 # logging
 LOGGER = logging.getLogger("accurate-leakage")
@@ -24,8 +25,11 @@ parser.add_option("-c", "--clear", help="Clears temporary files and exits.", act
 parser.add_option("-x", "--execute", help="Run by overriding the trigger argument.", action="store_true")
 (options, args) = parser.parse_args()
 
+# add /temp folder if it does not yet exist - resolves gitignore problem
+if not os.path.exists('temp'):
+   os.makedirs('temp')
+
 ## file memory in case of testing/debugging
-import shutil
 def copytree(src, dst, symlinks=False, ignore=None):
     for item in os.listdir(src):
         s = os.path.join(src, item)
@@ -83,7 +87,7 @@ else:
     state["current_positions"] = current_positions
     LOGGER.info(f'Crawler iteration complete. Nodes to check: {state["crawl_res"]}.')
     IO.write_state(state)
-    
+
     # Signal back first result
     if not options.test:
         IO.write_instructions_kafka(state["crawl_res"])
@@ -118,13 +122,13 @@ while True:
         # adding checkpoint in case of error
         IO.write_state(state)
         LOGGER.info(f"Run {state['iter']} completed successfully! Waiting for relocation.")
-        
+
 
     # Commit every branch back for relocation - step #3
     elif state and state["crawl_complete"] and len(state["to_append"]) != 0 and is_moved:
         state["to_append"].pop(0)
         if len(state["to_append"]) == 0:
-            
+
             continue
         idx_of_branch = state["to_append"][0]
         try:
@@ -143,7 +147,7 @@ while True:
     elif state and state["crawl_complete"] and len(state["branches"]) == 0:
         state = pipe.run_branch_search(state)
         if len(state["to_append"]) == 0:
-            
+
             continue
         idx_of_branch = state["to_append"][0]
         if not options.test:
@@ -155,7 +159,7 @@ while True:
     # Run analysis on the system and find leakage - step #4
     elif state and state["crawl_complete"] and len(state["branches"]) != 0 and len(state["to_append"]) == 0:
         state = pipe.run_poly_search(state)
-        
+
         if not options.test:
             IO.write_instructions_kafka(state["algorithm_res"], is_final=True)
             IO.send_final_location(state["algorithm_res"])
