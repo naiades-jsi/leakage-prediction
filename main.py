@@ -54,7 +54,7 @@ if options.clear:
 
 run_loop = False
 testing = False
-day = 24* 3600 # number of seconds in a day - perform daily check
+check_interval = 8* 3600 # perform a check every 8 hours
 IO.check_accessible_nodes_kafka()
 
 while not run_loop:
@@ -89,8 +89,8 @@ else:
         IO.write_instructions_kafka(state["crawl_res"])
     else:
         LOGGER.info("Testing mode enabled, data will not be sent.")
-    LOGGER.info("Run completed successfully! Waiting for relocation. Time before next run: {}".format(day))
-    sleep(day)
+    LOGGER.info("Run completed successfully! Waiting for relocation. Time before next run: {}".format(check_interval))
+    sleep(check_interval)
 
 
 while True:
@@ -168,7 +168,7 @@ while True:
 
     else:
         # Sleep if no new changes
-        LOGGER.info("Waiting for relocation.")
+        LOGGER.info("No sensor changes. Waiting for relocation.")
         # Remove information from last run.
         if options.test:
             LOGGER.info("Test mode was enabled, discarding last run.")
@@ -176,4 +176,4 @@ while True:
             shutil.rmtree("testing_storage/", ignore_errors=True)
             exit()
 
-        sleep(day)
+        sleep(check_interval)

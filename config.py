@@ -2,7 +2,7 @@ begin = True
 kafka_bootstrap_server = "localhost:9092"
 layout_DIR = "./layout/"
 layout_file_path = "./layout/clean_network.json"
-noise_data_DIR = "../dump/"
+noise_data_DIR = "../dump/" 
 kafka_params = {"bootstrap_servers": [kafka_bootstrap_server],
                 "auto_offset_reset": "latest",
                 "enable_auto_commit": "True",

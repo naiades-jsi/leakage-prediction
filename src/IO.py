@@ -154,9 +154,8 @@ def send_to_kafka(sensor, data, is_final):
         "position": data, # data is [x, y]
         "is_final" : False
     })
-    if args.test: LOGGER.info("Testing mode enabled, data will not be sent.")
-    else:
-        producer.send(topic, to_send.encode("utf-8"))
+
+    producer.send(topic, to_send.encode("utf-8"))
     return
 
 def send_alert(data, is_final=False):
@@ -168,10 +167,7 @@ def send_alert(data, is_final=False):
             "position": data["location"]["coordinates"],
             "final_location" : True
             })
-        if args.test:
-            LOGGER.info("Test mode enabled, final location will not be forwarded to API.")
-        else:
-            producer.send(topic, to_send.encode("utf-8"))
+        producer.send(topic, to_send.encode("utf-8"))
     return
 
 def write_instructions_kafka(node, is_final=False):
@@ -203,31 +199,40 @@ def read_kafka(state):
     node_list = state["current_positions"]
 
     consumer = KafkaConsumer(bootstrap_servers= [bootstrap_server],
-                auto_offset_reset= "latest",
-                enable_auto_commit= True,
-                auto_commit_interval_ms=2000,
-                group_id= "braila_noise_predictions",
+                auto_offset_reset= "earliest",
+                enable_auto_commit= False,
+                group_id= None,
                 value_deserializer= lambda x: json.loads(x.decode('utf-8')),
-                consumer_timeout_ms= 3000
+                consumer_timeout_ms=3000
+
                 )
     for sensor_id in config.noise_sensor_ids:
         sensor = config.kafka_input_topic_prefix+sensor_id
-
         consumer.subscribe([sensor])
+
         last_entry = None
+        last_valid = None
         for message in consumer:
             last_entry = message.value
-            LOGGER.info(f"{sensor, last_entry}")
-        if last_entry:
-            moved_sensors[sensor] = last_entry
+            if not last_entry["noise_db"]:
+                LOGGER.info(f"{sensor_id}, Noise was null. Checking previous entry")
+                last_entry = last_valid
+            else:
+                last_valid = message.value
+        moved_sensors[sensor] = last_entry
+        LOGGER.info(f"Last entry for {sensor}: {last_entry}")
 
     current_positions = []
     n_moved = 0
 
     for sensor in moved_sensors: ## "moved sensor" is not necessarily moved irl
         try:
-            location = eval(moved_sensors[sensor]["location"])
-            newLocation = eval(moved_sensors[sensor]["isMovedToNewLocation"])
+            if type(last_entry["location"]) != dict:
+                location = eval(moved_sensors[sensor]["location"])
+                newLocation = eval(moved_sensors[sensor]["isMovedToNewLocation"])
+            else:
+                location = moved_sensors[sensor]["location"]
+                newLocation = moved_sensors[sensor]["isMovedToNewLocation"]
             junction, x, y = geo_converter.wgs84_to_3844(location["coordinates"][0], location["coordinates"][1])
             current_positions.append(junction)
 
@@ -235,7 +240,7 @@ def read_kafka(state):
                 LOGGER.info(f"{junction} already in node_list")
                 continue
             if location["coordinates"][0] != newLocation["coordinates"][0]:
-                LOGGER.info(f"Sensor {sensor} didn't move.")
+                LOGGER.info(f"Sensor {sensor[18:]} didn't move.")
                 continue
 
             noise_df = pd.read_csv("./temp/noise_sensors.csv", index_col=0)
